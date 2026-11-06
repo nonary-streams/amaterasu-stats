@@ -50,7 +50,12 @@ do not fail the history module tick or the stream session.
 
 Session sample `encode_latency_ms` is nullable. `null` means the producer has no
 encoder timing measurement; a number is accepted only when a caller supplies a
-measured value. The schema upgrade preserves historical sample rows and values,
+measured value. Stream-session derives interval means from the selected video
+provider's optional versioned input-to-owned-output-ready counters. This includes
+provider conversion, queueing and codec output-readiness observation, not capture,
+client latency or a GPU-only execution time. Unknown intervals, missing/new
+providers and incompatible epochs remain null; measured zero stays zero.
+The schema upgrade preserves historical sample rows and values,
 while converting the old stream-session zero placeholder to unknown.
 
 When `enabled` changes during active streams, the saved value is reported

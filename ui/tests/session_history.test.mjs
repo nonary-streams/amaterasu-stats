@@ -65,7 +65,7 @@ test("history charts preserve measured gaps, scale by time and export the comple
   const video = charts.find((chart)=>chart.attributes["aria-label"].startsWith("Accepted video rate"));
   const videoLine = find(video,(element)=>element.tagName === "polyline");
   assert.match(videoLine.attributes.points,/^0,.* 64,.* 320,/);
-  const latency = charts.find((chart)=>chart.attributes["aria-label"].startsWith("Encoder latency"));
+  const latency = charts.find((chart)=>chart.attributes["aria-label"].startsWith("Encoder pipeline latency"));
   assert.match(latency.attributes["aria-label"],/2 recorded values, latest 4.5 ms/);
   find(view,(element)=>element.tagName === "button" && element.textContent === "3 min").click();
   assert.match(view.textContent,/1 of 3 returned samples/);
@@ -87,7 +87,7 @@ test("history charts do not infer missing latency or reorder repeated and backwa
   source.samples.forEach((sample)=>{sample.encode_latency_ms=null;});
   const view = sandbox.Amaterasu.renderRecordedSessionDetail(source,()=>{});
   assert.match(view.textContent,/evenly spaced in recorded order/);
-  const latency = descend(view).find((element)=>element.tagName === "svg" && element.attributes["aria-label"].startsWith("Encoder latency"));
+  const latency = descend(view).find((element)=>element.tagName === "svg" && element.attributes["aria-label"].startsWith("Encoder pipeline latency"));
   assert.match(latency.attributes["aria-label"],/0 recorded values, latest Unavailable/);
   assert.equal(descend(latency).filter((element)=>element.tagName === "polyline" || element.tagName === "circle").length,0);
 });

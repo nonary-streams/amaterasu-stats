@@ -10,6 +10,7 @@ moved intact before adding the public plugin boundaries and chart controls.
 | Encoder utilization and network rates | Read-only NVML and measured OS byte deltas |
 | Host charts, visible ranges, inspection | Shared chart SDK, stable zoom during polling, keyboard and pointer inspection, series toggles |
 | Active streams and per-stream charts | Independent live counters, recording-independent observations, source/range selection |
+| Encoder pipeline latency | Provider input-to-owned-output-ready timings through the public SDK; live interval means, recorded samples, unknown gaps and replacement epochs |
 | Stop a selected active stream | Approved streaming API; retains transport ownership and confirms normal cleanup |
 | Recorded session cards and detail | Paged records, bounded full timelines, events and performance charts |
 | Reconnect-like grouping | Matching adjacent records with explicit uncertainty; member identities retained |
@@ -25,8 +26,9 @@ available; AMD DRM sysfs remains supported. Windows CPU, memory and network use
 Win32 counters; NVIDIA measurements use the same NVML adapter. Windows bindings
 are source-checked from Linux; an actual Windows host run is a separate gate.
 Windows GPU performance counters additionally supply non-NVIDIA GPU load, encoder
-load and dedicated memory usage when the driver exposes those counters. A
-non-NVIDIA memory capacity or unsupported CPU temperature sensor remains
+load and dedicated memory usage when the driver exposes those counters. DXGI supplies aggregate hardware dedicated-memory capacity to pair with the PDH
+adapter usage sum; software and duplicate adapters are excluded. A shared-memory
+GPU without dedicated capacity, or an unsupported CPU temperature sensor, remains
 unavailable instead of being estimated. macOS remains unsupported.
 
 The native APIs preserve output field bounds, counter provenance, cancellation,
@@ -34,12 +36,27 @@ recording admission, and result release. The dashboard is not proof of gameplay
 performance. Live client playback and installed-host qualification remain
 separate from isolated source, browser, driver, and API replacement tests.
 
-## Outstanding measurement parity
+## Measurement scope and remaining qualification
 
-The current video/encoder contract does not report measured encoder latency;
-`encode_latency_ms` remains null when no provider supplies a measurement. The UI
-can chart reported values, but this extraction does not turn queue acceptance
-into encode, capture, display, or client latency. Per-stage timing instrumentation
-requires a separately qualified media-provider contract. Windows non-NVIDIA
-VRAM capacity is also unavailable without an adapter capacity source. These are
-remaining data-parity requirements, not completed measurements.
+The optional encoder v1.3, encoder-provider v1.1 and video v1.4 timing tails
+carry exact cumulative completed-frame measurements. The reference encoder
+records input submission and timestamps owned coded output when the backend
+produces it, before it waits in consumer queues. This includes provider
+conversion, worker queueing and encoding through the provider's output-readiness
+observation; an asynchronous codec's internal completion time is not separately
+known. It excludes later consumer polling, rejected-sink retries, capture,
+transport, decode and presentation. It is not a GPU execution-only measurement.
+
+Live and recorded samples use means of compatible cumulative interval deltas.
+A provider without the optional interface, a missing measurement, an interval
+with no newly measured frames, a backwards counter or a replacement epoch
+remains unknown. A genuine measured zero remains zero. No admission is treated
+as completion and no client latency is invented.
+
+Linux NVIDIA and software x264 qualification can run locally with isolated
+synthetic frames through the same public SDK query. Windows CPU/network/PDH,
+DXGI capacity and NVML bindings are source-checked from Linux, with adapter
+filtering and ABI layout regressions. Actual Windows driver/hardware testing
+and installed-host/client qualification remain deferred. Device-only stage
+breakdowns and client presentation latency require their own measured sources;
+they are not inferred from these encoder pipeline timings.

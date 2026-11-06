@@ -68,7 +68,7 @@ try {
       if(alias==='history_preferences')return {ok:true,revision:1,settings:{enabled:true,ttl_days:30,db_size_limit_mb:100},effective_enabled:true};
       if(alias==='history_status')return {ok:true,status:{available:true,configuration_ready:true,applied_revision:1,enabled:true,effective_enabled:true,degraded:false,failed_operations:0,active_streams:1,pending_activities:0,sessions:1,samples:4,events:0,live_bytes:5000,last_prune:{sessions_deleted:0,live_bytes:5000,size_limit_bytes:0,size_limit_unmet:false}}};
       if(alias==='host')return {ok:true,available:true,platform:'linux',sampled_at_unix_ms:Date.now(),host:snapshot,samples:Array.from({length:20},(_,i)=>({recorded_at_unix_ms:Date.now()-20000+i*1000,host:{...snapshot,cpu_percent:25+Math.sin(i)*8,gpu_percent:50+Math.sin(i/2)*30}}))};
-      if(alias==='streams'){counter++;return {ok:true,epoch:'b'.repeat(32),sampled_at_ms:String(counter*250),sampled_at_unix_ms:String(Date.now()),sessions:[{session_id:'live-1',started_at_unix:1700000000,device_name:'Living room',width:2560,height:1440,target_fps:120,target_bitrate_kbps:50000,codec:'hevc',frames_sent:String(counter*30),bytes_sent:String(counter*1500000),sequence_gaps:'0'}]};}
+      if(alias==='streams'){counter++;return {ok:true,epoch:'b'.repeat(32),sampled_at_ms:String(counter*250),sampled_at_unix_ms:String(Date.now()),sessions:[{session_id:'live-1',started_at_unix:1700000000,device_name:'Living room',width:2560,height:1440,target_fps:120,target_bitrate_kbps:50000,codec:'hevc',frames_sent:String(counter*30),bytes_sent:String(counter*1500000),sequence_gaps:'0',encode_timing:{version:1,scope:'provider_input_to_output_ready',epoch:'1',completed_frames:String(counter*30),total_us:String(counter*30*4000),min_us:'4000',max_us:'4000'}}]};}
       if(alias==='history_list')return {ok:true,sessions:[saved],next_offset:null};
       if(alias==='history_detail'){
         const id=payload.payload.session_id;
@@ -94,6 +94,9 @@ try {
   await evaluate(`[...document.querySelectorAll('.history-card button')].find(node=>node.textContent==='Details').click()`);
   for(let i=0;i<100&&!await evaluate(`!!document.querySelector('.recorded-session-detail')`);i++)await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(await evaluate(`!!document.querySelector('.recorded-session-detail .plugin-metric-chart')`),true,'recorded detail uses shared interactive charts');
+  for(let i=0;i<100&&!await evaluate(`document.querySelector('.live-session-card .plugin-metric-plot[aria-label^="Encoder pipeline latency"]')?.getAttribute('aria-label').match(/[1-9][0-9]* measured/)`);i++)await new Promise(resolve=>setTimeout(resolve,25));
+  await evaluate(`window.latencyPlot=document.querySelector('.live-session-card .plugin-metric-plot[aria-label^="Encoder pipeline latency"]');latencyPlot.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}));`);
+  assert.match(await evaluate(`latencyPlot.closest('.plugin-metric-chart').querySelector('.plugin-chart-readout').textContent`),/4(?:\.0+)? ms/,'live SDK counters reach a measured chart value');
   const directory=process.env.AMATERASU_QUALIFICATION_DIR;
   if(directory){mkdirSync(directory,{recursive:true});const shot=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:true},sessionId);writeFileSync(join(directory,'stats-desktop.png'),Buffer.from(shot.data,'base64'));}
   await command('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true},sessionId);

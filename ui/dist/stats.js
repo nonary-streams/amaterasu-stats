@@ -80,6 +80,29 @@ var Amaterasu;
 })(Amaterasu || (Amaterasu = {}));
 var Amaterasu;
 (function (Amaterasu) {
+    function parseLiveTiming(value) {
+        if (value == null)
+            return null;
+        if (typeof value !== "object" || Array.isArray(value))
+            throw new Error("Encoder timing is invalid.");
+        const row = value;
+        if (row.version !== 1 || row.scope !== "provider_input_to_output_ready")
+            throw new Error("Encoder timing is unsupported.");
+        const epoch = liveUnsigned(row.epoch), frames = liveUnsigned(row.completed_frames), total = liveUnsigned(row.total_us);
+        const min = liveUnsigned(row.min_us), max = liveUnsigned(row.max_us);
+        if (epoch === 0n || max > 60000000n || min > max ||
+            (frames === 0n ? total !== 0n || min !== 0n || max !== 0n : total < frames * min || total > frames * max))
+            throw new Error("Encoder timing is invalid.");
+        return { epoch, frames, total };
+    }
+    function liveTimingMean(current, previous) {
+        if (!current || !previous || current.epoch !== previous.epoch || current.frames <= previous.frames || current.total < previous.total)
+            return null;
+        const frames = current.frames - previous.frames, total = current.total - previous.total;
+        if (total > frames * 60000000n)
+            return null;
+        return Number(total) / Number(frames) / 1000;
+    }
     function liveUnsigned(value) {
         if (typeof value !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(value))
             throw new Error("Live stream counter is invalid.");
@@ -123,7 +146,7 @@ var Amaterasu;
                     protocol: "sunshine-modern", client_name: "", device_name: row.device_name ?? "", app_name: "",
                     width: row.width, height: row.height, target_fps: row.target_fps,
                     target_bitrate_kbps: row.target_bitrate_kbps, codec: row.codec },
-                counters: { frames: liveUnsigned(row.frames_sent), bytes: liveUnsigned(row.bytes_sent), gaps: liveUnsigned(row.sequence_gaps) },
+                counters: { frames: liveUnsigned(row.frames_sent), bytes: liveUnsigned(row.bytes_sent), gaps: liveUnsigned(row.sequence_gaps), timing: parseLiveTiming(row.encode_timing) },
             };
         });
         return { epoch: reply.epoch, sampledAt, sampledAtUnixMs, streams };
@@ -162,7 +185,7 @@ var Amaterasu;
                                 frames_sent: Number(stream.counters.frames), bytes_sent: Number(stream.counters.bytes), dropped_frames: Number(stream.counters.gaps),
                                 actual_fps: Number(stream.counters.frames - old.counters.frames) * 1000 / elapsed,
                                 actual_bitrate_kbps: Number(stream.counters.bytes - old.counters.bytes) * 8 / elapsed,
-                                encode_latency_ms: null }];
+                                encode_latency_ms: liveTimingMean(stream.counters.timing, old.counters.timing) }];
                     }
                 }
                 samples = samples.filter((sample) => sample.recorded_at_unix >= snapshot.sampledAtUnixMs / 1000 - retentionSeconds).slice(-maxPoints);
@@ -445,6 +468,7 @@ var Amaterasu;
     function historyValue(value, unit, digits = 1) {
         return value == null ? "Unavailable" : `${value.toFixed(digits)} ${unit}`;
     }
+    const encoderTimingDescription = "Includes encoder queueing, conversion and encoding until coded output is ready. Capture, transfer and display time are separate. Gaps mean unavailable.";
     function historySummaryItem(label, value) {
         return Amaterasu.el("div", "recorded-session-summary-item", Amaterasu.el("dt", "", label), Amaterasu.el("dd", "", value));
     }
@@ -520,7 +544,7 @@ var Amaterasu;
         }
         return Amaterasu.el("div", "host-metric-chart-card", Amaterasu.el("div", "host-metric-chart-heading", Amaterasu.el("strong", "", label), Amaterasu.el("span", "", historyLiteral(historyValue(current, unit, unit === "gaps" ? 0 : 1)))), svg, Amaterasu.el("small", "muted", historyLiteral(available.length
             ? `${available.length} ${observation}values · scale 0–${maximum.toFixed(unit === "gaps" ? 0 : 1)} ${unit}`
-            : source === "live" ? "No observed values." : "No recorded values.")));
+            : source === "live" ? "No observed values." : "No recorded values.")), ...(label === "Encoder pipeline latency" ? [Amaterasu.el("p", "muted", encoderTimingDescription)] : []));
     }
     function combineActiveSamples(recorded, live, retentionSeconds, maxPoints) {
         const livePoints = live.samples.filter((sample) => sample.chart_source === "live" &&
@@ -579,6 +603,8 @@ var Amaterasu;
             if (!view) {
                 view = ui.metricChart({ label, unit, minimum: 0, series });
                 views.set(label, view);
+                if (label === "Encoder pipeline latency")
+                    view.element.append(Amaterasu.el("p", "muted", encoderTimingDescription));
             }
             else
                 view.setData?.(series);
@@ -655,7 +681,7 @@ var Amaterasu;
                 return;
             }
             const chartSource = mode === "combined" ? "combined" : mode;
-            charts.replaceChildren(Amaterasu.el("div", "recorded-session-chart-grid", chart("Accepted video rate", "fps", selected, (sample) => sample.actual_fps, chartSource), chart("Accepted audio/video payload rate", "Mbit/s", selected, (sample) => sample.actual_bitrate_kbps / 1000, chartSource), chart("Encoder latency", "ms", selected, (sample) => sample.encode_latency_ms ?? null, chartSource), chart("Observed video sequence gaps", "gaps", selected, (sample) => sample.dropped_frames, chartSource)));
+            charts.replaceChildren(Amaterasu.el("div", "recorded-session-chart-grid", chart("Accepted video rate", "fps", selected, (sample) => sample.actual_fps, chartSource), chart("Accepted audio/video payload rate", "Mbit/s", selected, (sample) => sample.actual_bitrate_kbps / 1000, chartSource), chart("Encoder pipeline latency", "ms", selected, (sample) => sample.encode_latency_ms ?? null, chartSource), chart("Observed video sequence gaps", "gaps", selected, (sample) => sample.dropped_frames, chartSource)));
         }
         function downloadChartCsv() {
             if (!currentSession || !currentPoints.length)
@@ -758,7 +784,7 @@ var Amaterasu;
             const spacing = samples.length === 1 ? " · single sample" : ordered
                 ? " · time-proportional spacing" : " · evenly spaced in recorded order because timestamps repeat or move backward";
             rangeStatus.textContent = `${samples.length} of ${detail.samples.length} returned samples${spacing}.`;
-            chartArea.replaceChildren(Amaterasu.el("div", "recorded-session-chart-grid", chart("Accepted video rate", "fps", samples, (sample) => sample.actual_fps), chart("Accepted audio/video payload rate", "Mbit/s", samples, (sample) => sample.actual_bitrate_kbps / 1000), chart("Encoder latency", "ms", samples, (sample) => sample.encode_latency_ms ?? null), chart("Observed video sequence gaps", "gaps", samples, (sample) => sample.dropped_frames)));
+            chartArea.replaceChildren(Amaterasu.el("div", "recorded-session-chart-grid", chart("Accepted video rate", "fps", samples, (sample) => sample.actual_fps), chart("Accepted audio/video payload rate", "Mbit/s", samples, (sample) => sample.actual_bitrate_kbps / 1000), chart("Encoder pipeline latency", "ms", samples, (sample) => sample.encode_latency_ms ?? null), chart("Observed video sequence gaps", "gaps", samples, (sample) => sample.dropped_frames)));
         }
         for (const minutes of [null, 3, 5, 15, 30, 60]) {
             const node = Amaterasu.button(minutes === null ? "Available samples" : `${minutes} min`, () => { range = minutes; draw(); }, "recorded-range-button");
@@ -785,7 +811,7 @@ var Amaterasu;
         function drawSamples() {
             const start = samplePage * 50;
             const visible = detail.samples.slice(start, start + 50);
-            sampleArea.replaceChildren(visible.length ? Amaterasu.table([...(members ? ["Stream"] : []), "Recorded time", "Accepted frames", "Accepted bytes", "Sequence gaps", "Video fps", "Payload kbps", "Encoder latency"], visible.map((sample) => [...(members ? [historyLiteral(sample.session_id)] : []), historyTime(sample.recorded_at_unix), String(sample.frames_sent), String(sample.bytes_sent),
+            sampleArea.replaceChildren(visible.length ? Amaterasu.table([...(members ? ["Stream"] : []), "Recorded time", "Accepted frames", "Accepted bytes", "Sequence gaps", "Video fps", "Payload kbps", "Encoder pipeline latency"], visible.map((sample) => [...(members ? [historyLiteral(sample.session_id)] : []), historyTime(sample.recorded_at_unix), String(sample.frames_sent), String(sample.bytes_sent),
                 String(sample.dropped_frames), sample.actual_fps.toFixed(1), sample.actual_bitrate_kbps.toFixed(1), historyValue(sample.encode_latency_ms, "ms")])) : Amaterasu.el("p", "muted", "No samples recorded."), ...(detail.samples.length > 50 ? [Amaterasu.pager(samplePage > 0 ? () => { samplePage--; drawSamples(); } : null, start + visible.length < detail.samples.length ? () => { samplePage++; drawSamples(); } : null, historyLiteral(`Samples ${start + 1}–${start + visible.length} of ${detail.samples.length}`))] : []));
         }
         drawSamples();

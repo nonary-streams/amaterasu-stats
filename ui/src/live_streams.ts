@@ -4,7 +4,28 @@ namespace Amaterasu {
     chart_source: "live";
   };
   type LiveDetail = NonNullable<HistoryDetailReply["detail"]>;
-  interface LiveCounters { frames: bigint; bytes: bigint; gaps: bigint }
+  interface LiveEncodeTiming { epoch: bigint; frames: bigint; total: bigint }
+  interface LiveCounters { frames: bigint; bytes: bigint; gaps: bigint; timing: LiveEncodeTiming | null }
+
+  function parseLiveTiming(value: unknown): LiveEncodeTiming | null {
+    if (value == null) return null; // Older hosts explicitly have no measurement.
+    if (typeof value !== "object" || Array.isArray(value)) throw new Error("Encoder timing is invalid.");
+    const row = value as Record<string,unknown>;
+    if (row.version !== 1 || row.scope !== "provider_input_to_output_ready") throw new Error("Encoder timing is unsupported.");
+    const epoch = liveUnsigned(row.epoch), frames = liveUnsigned(row.completed_frames), total = liveUnsigned(row.total_us);
+    const min = liveUnsigned(row.min_us), max = liveUnsigned(row.max_us);
+    if (epoch === 0n || max > 60_000_000n || min > max ||
+        (frames === 0n ? total !== 0n || min !== 0n || max !== 0n : total < frames * min || total > frames * max))
+      throw new Error("Encoder timing is invalid.");
+    return {epoch, frames, total};
+  }
+
+  function liveTimingMean(current: LiveEncodeTiming | null, previous: LiveEncodeTiming | null): number | null {
+    if (!current || !previous || current.epoch !== previous.epoch || current.frames <= previous.frames || current.total < previous.total) return null;
+    const frames = current.frames - previous.frames, total = current.total - previous.total;
+    if (total > frames * 60_000_000n) return null;
+    return Number(total) / Number(frames) / 1000;
+  }
   interface LiveStream {
     session: HistorySessionSummary;
     counters: LiveCounters;
@@ -61,7 +82,7 @@ namespace Amaterasu {
           protocol:"sunshine-modern", client_name:"", device_name:(row.device_name as string | null) ?? "", app_name:"",
           width:row.width as number, height:row.height as number, target_fps:row.target_fps as number,
           target_bitrate_kbps:row.target_bitrate_kbps as number, codec:row.codec as string },
-        counters: { frames:liveUnsigned(row.frames_sent), bytes:liveUnsigned(row.bytes_sent), gaps:liveUnsigned(row.sequence_gaps) },
+        counters: { frames:liveUnsigned(row.frames_sent), bytes:liveUnsigned(row.bytes_sent), gaps:liveUnsigned(row.sequence_gaps), timing:parseLiveTiming(row.encode_timing) },
       };
     });
     return { epoch:reply.epoch, sampledAt, sampledAtUnixMs, streams };
@@ -96,7 +117,7 @@ namespace Amaterasu {
               frames_sent:Number(stream.counters.frames), bytes_sent:Number(stream.counters.bytes), dropped_frames:Number(stream.counters.gaps),
               actual_fps:Number(stream.counters.frames - old.counters.frames) * 1000 / elapsed,
               actual_bitrate_kbps:Number(stream.counters.bytes - old.counters.bytes) * 8 / elapsed,
-              encode_latency_ms:null}];
+              encode_latency_ms:liveTimingMean(stream.counters.timing, old.counters.timing)}];
           }
         }
         samples = samples.filter((sample) => sample.recorded_at_unix >= snapshot.sampledAtUnixMs / 1000 - retentionSeconds).slice(-maxPoints);

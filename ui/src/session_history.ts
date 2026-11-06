@@ -67,6 +67,8 @@ namespace Amaterasu {
     return value == null ? "Unavailable" : `${value.toFixed(digits)} ${unit}`;
   }
 
+  const encoderTimingDescription = "Includes encoder queueing, conversion and encoding until coded output is ready. Capture, transfer and display time are separate. Gaps mean unavailable.";
+
   function historySummaryItem(label: string, value: Node | TextValue): HTMLElement {
     return el("div", "recorded-session-summary-item", el("dt", "", label), el("dd", "", value));
   }
@@ -144,7 +146,8 @@ namespace Amaterasu {
       svg,
       el("small", "muted", historyLiteral(available.length
         ? `${available.length} ${observation}values · scale 0–${maximum.toFixed(unit === "gaps" ? 0 : 1)} ${unit}`
-        : source === "live" ? "No observed values." : "No recorded values.")));
+        : source === "live" ? "No observed values." : "No recorded values.")),
+      ...(label === "Encoder pipeline latency" ? [el("p", "muted", encoderTimingDescription)] : []));
   }
 
   export interface CombinedActiveSamples {
@@ -207,7 +210,10 @@ namespace Amaterasu {
       const bounded = points;
       const series = [{id:label,label,points:bounded}];
       let view = views.get(label);
-      if (!view) { view = ui.metricChart({label,unit,minimum:0,series}); views.set(label,view); }
+      if (!view) {
+        view = ui.metricChart({label,unit,minimum:0,series}); views.set(label,view);
+        if (label === "Encoder pipeline latency") view.element.append(el("p", "muted", encoderTimingDescription));
+      }
       else view.setData?.(series);
       return view.element;
     };
@@ -293,7 +299,7 @@ namespace Amaterasu {
       charts.replaceChildren(el("div", "recorded-session-chart-grid",
         chart("Accepted video rate", "fps", selected, (sample) => sample.actual_fps, chartSource),
         chart("Accepted audio/video payload rate", "Mbit/s", selected, (sample) => sample.actual_bitrate_kbps / 1000, chartSource),
-        chart("Encoder latency", "ms", selected, (sample) => sample.encode_latency_ms ?? null, chartSource),
+        chart("Encoder pipeline latency", "ms", selected, (sample) => sample.encode_latency_ms ?? null, chartSource),
         chart("Observed video sequence gaps", "gaps", selected, (sample) => sample.dropped_frames, chartSource)));
     }
 
@@ -404,7 +410,7 @@ namespace Amaterasu {
       chartArea.replaceChildren(el("div", "recorded-session-chart-grid",
         chart("Accepted video rate", "fps", samples, (sample) => sample.actual_fps),
         chart("Accepted audio/video payload rate", "Mbit/s", samples, (sample) => sample.actual_bitrate_kbps / 1000),
-        chart("Encoder latency", "ms", samples, (sample) => sample.encode_latency_ms ?? null),
+        chart("Encoder pipeline latency", "ms", samples, (sample) => sample.encode_latency_ms ?? null),
         chart("Observed video sequence gaps", "gaps", samples, (sample) => sample.dropped_frames)));
     }
     for (const minutes of [null, 3, 5, 15, 30, 60] as const) {
@@ -433,7 +439,7 @@ namespace Amaterasu {
       const start = samplePage * 50;
       const visible = detail.samples.slice(start, start + 50);
       sampleArea.replaceChildren(visible.length ? table(
-        [...(members ? ["Stream"] : []), "Recorded time", "Accepted frames", "Accepted bytes", "Sequence gaps", "Video fps", "Payload kbps", "Encoder latency"],
+        [...(members ? ["Stream"] : []), "Recorded time", "Accepted frames", "Accepted bytes", "Sequence gaps", "Video fps", "Payload kbps", "Encoder pipeline latency"],
         visible.map((sample) => [...(members ? [historyLiteral(sample.session_id)] : []), historyTime(sample.recorded_at_unix), String(sample.frames_sent), String(sample.bytes_sent),
           String(sample.dropped_frames), sample.actual_fps.toFixed(1), sample.actual_bitrate_kbps.toFixed(1), historyValue(sample.encode_latency_ms, "ms")]),
       ) : el("p", "muted", "No samples recorded."),

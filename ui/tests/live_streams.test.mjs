@@ -40,6 +40,23 @@ test("host clock jumps reset the rate baseline instead of joining incompatible i
   assert.equal(read(5000,200000,340).detail.samples.length,0);
 });
 
+test("measured timing uses exact interval deltas and resets across encoder replacements",()=>{
+  const timing=(frames,total,epoch="1")=>({version:1,scope:"provider_input_to_output_ready",epoch,
+    completed_frames:String(frames),total_us:String(total),min_us:"0",max_us:frames ? "60000000" : "0"});
+  const tracker=new sandbox.Amaterasu.LiveStreamTracker();
+  const read=(at,measurement)=>tracker.update(snapshot(at,[stream({encode_timing:measurement})]),30,30).get("stream-1").detail.samples;
+  assert.equal(read(1000,timing(0,0)).length,0);
+  assert.equal(read(2000,timing(2,8000)).at(-1).encode_latency_ms,4);
+  assert.equal(read(3000,timing(3,8000)).at(-1).encode_latency_ms,0);
+  assert.equal(read(4000,timing(3,8000)).at(-1).encode_latency_ms,null);
+  assert.equal(read(5000,timing(1,2000,"2")).at(-1).encode_latency_ms,null);
+  assert.equal(read(6000,timing(2,8000,"2")).at(-1).encode_latency_ms,6);
+  assert.equal(read(7000,null).at(-1).encode_latency_ms,null);
+  assert.equal(read(8000,timing(3,9000,"2")).at(-1).encode_latency_ms,null);
+  assert.throws(()=>snapshot(1,[stream({encode_timing:{...timing(1,1),epoch:"0"}})]));
+  assert.throws(()=>snapshot(1,[stream({encode_timing:{...timing(0,0),total_us:"1"}})]));
+});
+
 test("live rates need two monotonic snapshots and reset when identity or counters change",()=>{
   const tracker=new sandbox.Amaterasu.LiveStreamTracker();
   const read=(value)=>tracker.update(value,30,3).get("stream-1");
