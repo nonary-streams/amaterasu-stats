@@ -10,6 +10,9 @@ mod provider;
 mod windows;
 #[cfg(any(target_os = "windows", feature = "windows-platform-check"))]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod windows_dxgi;
+#[cfg(any(target_os = "windows", feature = "windows-platform-check"))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod windows_gpu;
 
 use amaterasu_module_sdk::{Command, ManagedModule, ModuleResult, Response, RuntimeClient};

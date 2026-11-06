@@ -38,6 +38,17 @@ that it is the GPU selected for a particular stream.
 
 Windows uses GetSystemTimes, GlobalMemoryStatusEx and GetIfTable2 for CPU,
 physical memory, and non-loopback network rates, plus bounded PDH GPU counters and NVML for NVIDIA metrics.
+Read-only DXGI 1.1 adapter descriptions supply total hardware dedicated-memory
+capacity for the PDH adapter-memory aggregate. Software/duplicate adapters,
+partial enumeration and overflowing totals cannot become capacity readings;
+shared-memory-only adapters do not acquire an invented VRAM capacity. NVML
+usage/capacity replace that aggregate together, so a partial device query never
+pairs one device's usage with an all-adapter capacity. All COM references are
+released before the system DXGI library is unloaded.
+
+DXGI uses the documented [GetDesc1 contract](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgiadapter1-getdesc1)
+and [DXGI_ADAPTER_DESC1 fields](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/ns-dxgi-dxgi_adapter_desc1),
+not a process memory budget or shared-memory estimate.
 macOS remains unsupported. Every unavailable metric is independently null;
 a missing sensor never becomes a zero reading. CPU and network rates require
 two real source readings before a delta can be reported.

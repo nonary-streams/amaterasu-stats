@@ -28,6 +28,7 @@ impl GpuCounters {
         Some(result)
     }
     pub fn sample(&self, snapshot: &mut HostSnapshot) {
+        snapshot.vram_total_bytes = super::windows_dxgi::dedicated_capacity();
         // SAFETY: query remains live and this synchronous call is serialized.
         if unsafe { PdhCollectQueryData(self.query) } != 0 {
             return;

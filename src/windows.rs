@@ -52,7 +52,19 @@ impl Provider {
             gpu.sample(&mut result);
         }
         if let Some(nvidia) = &self.nvidia {
-            nvidia.sample(&mut result);
+            let mut measured = HostSnapshot::unavailable();
+            nvidia.sample(&mut measured);
+            result.gpu_percent = measured.gpu_percent.or(result.gpu_percent);
+            result.gpu_encoder_percent =
+                measured.gpu_encoder_percent.or(result.gpu_encoder_percent);
+            result.gpu_temp_c = measured.gpu_temp_c;
+            // A device's usage must not be paired with all-adapter capacity (or
+            // vice versa) if one NVML query fails.
+            if let (Some(used), Some(total)) = (measured.vram_used_bytes, measured.vram_total_bytes)
+            {
+                result.vram_used_bytes = Some(used);
+                result.vram_total_bytes = Some(total);
+            }
         }
         result
     }
@@ -149,11 +161,15 @@ fn network_counters() -> Option<(u64, u64)> {
 
 /// Select the installed driver library, never an application working directory.
 pub(crate) fn nvidia_driver_path() -> Option<std::path::PathBuf> {
+    system_library_path("nvml.dll")
+}
+
+pub(crate) fn system_library_path(name: &str) -> Option<std::path::PathBuf> {
     let mut buffer = vec![0u16; 32768];
     // SAFETY: the bounded writable UTF-16 buffer lives throughout the OS call.
     let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
     if length == 0 || length >= buffer.len() {
         return None;
     }
-    Some(std::path::PathBuf::from(String::from_utf16(&buffer[..length]).ok()?).join("nvml.dll"))
+    Some(std::path::PathBuf::from(String::from_utf16(&buffer[..length]).ok()?).join(name))
 }
