@@ -1,0 +1,139 @@
+{
+  "placements": [
+    "page",
+    "overview",
+    "settings"
+  ],
+  "methods": [
+    {
+      "alias": "preferences",
+      "provider": "amaterasu.host-metrics",
+      "service": "nonary.stats/1",
+      "method": "settings_get",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "configuration.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "preferences_update",
+      "provider": "amaterasu.host-metrics",
+      "service": "nonary.stats/1",
+      "method": "settings_update",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "configuration.write",
+      "min_role": "administrator"
+    },
+    {
+      "alias": "host",
+      "provider": "amaterasu.host-metrics",
+      "service": "nonary.stats/1",
+      "method": "stats_read",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "diagnostics.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "streams",
+      "provider": "amaterasu.stream-session",
+      "service": "nonary.stream-status/1",
+      "method": "snapshot",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "history_status",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "history_status",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "history_list",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "list_sessions",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "history_detail",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "session_detail",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "timeline_open",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "timeline_open",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "timeline_page",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "timeline_page",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "history_delete",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "delete_session",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.write",
+      "min_role": "operator"
+    },
+    {
+      "alias": "stream_stop",
+      "provider": "amaterasu.stream-session",
+      "service": "nonary.stream-status/1",
+      "method": "stop_stream",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "session.write",
+      "min_role": "operator"
+    },
+    {
+      "alias": "history_preferences",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "settings_get",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "configuration.read",
+      "min_role": "viewer"
+    },
+    {
+      "alias": "history_preferences_update",
+      "provider": "amaterasu.session-history",
+      "service": "nonary.stats-history/1",
+      "method": "settings_update",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "scope": "configuration.write",
+      "min_role": "administrator"
+    }
+  ]
+}

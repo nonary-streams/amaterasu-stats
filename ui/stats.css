@@ -1,0 +1,69 @@
+.stats-plugin .host-metrics-toolbar{ display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 24px 0; }
+.stats-plugin .host-metrics-toolbar p{ font-size: 13px; }
+.stats-plugin .host-vital-grid{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stats-plugin .host-vital{ display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.stats-plugin .host-vital > span{ font-size: 13px; }
+.stats-plugin .host-vital > strong{ font-size: 24px; font-weight: 600; overflow-wrap: anywhere; }
+.stats-plugin .host-vital > strong.host-vital-unavailable{ font-size: 14px; }
+.stats-plugin .host-vital > small{ font-size: 12px; }
+.stats-plugin .host-metric-details{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.stats-plugin .host-metric-detail{ display: grid; gap: 4px; font-size: 13px; }
+.stats-plugin .host-metric-detail strong{ font-weight: 500; }
+.stats-plugin .host-metric-chart-grid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.stats-plugin .host-metric-chart-card{ min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.stats-plugin .host-metric-chart-card strong,.stats-plugin .host-metric-chart-card small{ display: block; font-size: 12px; }
+.stats-plugin .host-metric-chart{ display: block; width: 100%; height: 84px; margin: 12px 0; color: var(--accent); }
+.stats-plugin .host-metric-chart-axis{ color: var(--strong); }
+.stats-plugin .host-metric-chart-line{ color: var(--accent); fill: currentColor; }
+.stats-plugin polyline.host-metric-chart-line{ fill: none; }
+.stats-plugin .host-metric-chart-line.host-metric-chart-live{ fill: none; stroke: currentColor; stroke-width: 2; }
+
+@media (max-width: 800px) {.stats-plugin .host-vital-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.stats-plugin .host-metric-details{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.stats-plugin .host-metrics-toolbar{ align-items: flex-start; flex-direction: column; }}
+.stats-plugin .host-metric-chart-heading{ display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.stats-plugin .host-metric-chart-heading span{ font-size: 13px; font-weight: 600; }
+.stats-plugin .recorded-session-detail{ margin-top: 20px; }
+.stats-plugin .recorded-session-heading{ display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; }
+.stats-plugin .recorded-session-heading h2{ margin: 0; font-size: 20px; overflow-wrap: anywhere; }
+.stats-plugin .recorded-session-heading p{ margin: 6px 0 0; }
+.stats-plugin .recorded-session-summary{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 16px; margin: 20px 0; }
+.stats-plugin .recorded-session-summary-item dt{ color: var(--muted); font-size: 12px; }
+.stats-plugin .recorded-session-summary-item dd{ margin: 5px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.stats-plugin .recorded-session-detail > h3{ margin: 22px 0 8px; font-size: 16px; }
+.stats-plugin .recorded-session-ranges{ display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 8px; }
+.stats-plugin .button.recorded-range-button{ min-height: 34px; padding: 5px 10px; font-size: 12px; }
+.stats-plugin .button.recorded-range-button[aria-pressed="true"]{ border-color: var(--accent-border); background: var(--selected-bg); color: var(--selected-accent); }
+.stats-plugin .recorded-session-range-status{ margin: 8px 0 12px; font-size: 12px; }
+.stats-plugin .recorded-session-chart-grid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 12px; }
+.stats-plugin .history-card-grid{ display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.stats-plugin .history-card{ min-width: 0; display: grid; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.stats-plugin .history-card-topline{ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+.stats-plugin .history-card-title{ font-size: 16px; overflow-wrap: anywhere; }
+.stats-plugin .history-card > .muted{ font-size: 13px; overflow-wrap: anywhere; }
+.stats-plugin .history-card-members{ border-top: 1px solid var(--line); padding-top: 10px; }
+.stats-plugin .history-card-members summary{ cursor: pointer; font-size: 13px; }
+.stats-plugin .history-card-member{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 12px; overflow-wrap: anywhere; }
+.stats-plugin .live-session-list{ display: grid; gap: 16px; }
+.stats-plugin .live-session-card{ min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.stats-plugin .live-session-card > p{ font-size: 13px; }
+.stats-plugin .live-session-current{ font-weight: 600; }
+.stats-plugin .live-session-legend{ margin: -6px 0 12px; font-size: 12px; }
+.stats-plugin .live-session-legend:empty{ display: none; }
+.stats-plugin .live-session-sources{ margin-bottom: 10px; }
+.stats-plugin .live-session-heading{ display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.stats-plugin .live-session-heading h3{ margin: 8px 0 4px; }
+.stats-plugin .live-session-heading p{ margin: 4px 0; }
+.stats-plugin .live-session-label{ display: inline-block; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; font-weight: 600; }
+.stats-plugin .live-session-pagination{ display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.stats-plugin .live-session-pagination[hidden]{ display: none; }
+.stats-plugin .recorded-session-disclosure{ margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.stats-plugin .recorded-session-disclosure > summary{ cursor: pointer; font-weight: 600; }
+.stats-plugin .recorded-session-disclosure .table-scroll{ margin-top: 12px; }
+.stats-plugin .recorded-session-event{ padding: 12px 0; border-bottom: 1px solid var(--line); }
+.stats-plugin .recorded-session-event > small{ display: block; margin-top: 4px; }
+.stats-plugin .recorded-session-event details{ margin-top: 8px; }
+.stats-plugin .recorded-session-event-payload{ white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+
+@media (max-width: 600px) {.stats-plugin .recorded-session-summary{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+.stats-plugin .stats-preferences {margin-top:24px} .stats-plugin .stats-confirm {max-width:min(90vw,500px);background:var(--bg);color:var(--strong);border:1px solid var(--line);border-radius:16px;padding:24px}

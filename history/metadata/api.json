@@ -1,0 +1,174 @@
+[
+  {
+    "service": "nonary.stats-history/1",
+    "method": "settings_get",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {},
+      "optional": {},
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  },
+  {
+    "service": "nonary.stats-history/1",
+    "method": "settings_update",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {
+        "settings": "object",
+        "expected_revision": "integer"
+      },
+      "optional": {},
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  },
+  {
+    "service": "nonary.stats-history/1",
+    "method": "history_status",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {},
+      "optional": {},
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  },
+  {
+    "service": "nonary.stats-history/1",
+    "method": "list_sessions",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {},
+      "optional": {
+        "limit": "integer",
+        "offset": "integer"
+      },
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  },
+  {
+    "service": "nonary.stats-history/1",
+    "method": "session_detail",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {
+        "session_id": "string"
+      },
+      "optional": {},
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  },
+  {
+    "service": "nonary.stats-history/1",
+    "method": "timeline_open",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {
+        "session_id": "string"
+      },
+      "optional": {
+        "sample_limit": "integer"
+      },
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  },
+  {
+    "service": "nonary.stats-history/1",
+    "method": "timeline_page",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {
+        "session_id": "string",
+        "kind": "string",
+        "cursor": "object"
+      },
+      "optional": {
+        "limit": "integer"
+      },
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  },
+  {
+    "service": "nonary.stats-history/1",
+    "method": "delete_session",
+    "interface_major": 1,
+    "interface_minor": 0,
+    "request": {
+      "required": {
+        "session_id": "string"
+      },
+      "optional": {},
+      "allow_extra": false
+    },
+    "response": {
+      "required": {
+        "ok": "boolean"
+      },
+      "optional": {},
+      "allow_extra": true
+    },
+    "privilege": "user"
+  }
+]
