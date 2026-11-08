@@ -4,6 +4,41 @@ use serde_json::json;
 use std::fs;
 
 #[test]
+fn startup_accepts_a_policy_without_the_optional_stats_alias() {
+    use amaterasu_module_sdk::abi::{self, AbiHeader, BorrowedBytes, HostApi, ReplySink};
+    use std::ffi::c_void;
+
+    unsafe extern "C" fn invoke(
+        _context: *mut c_void,
+        input: BorrowedBytes,
+        reply: ReplySink,
+    ) -> abi::Status {
+        // SAFETY: the host keeps command bytes valid for the synchronous callback.
+        let command: Command = serde_json::from_slice(unsafe { input.read().unwrap() }).unwrap();
+        let response = match command {
+            Command::Register { service } if service == SERVICE => Response::Ok,
+            Command::RegisterApi { .. } => {
+                Response::error("permission_denied", "alias not granted")
+            }
+            Command::GetSettings {} => Response::error("unavailable", "no settings"),
+            _ => panic!("unexpected startup command"),
+        };
+        // SAFETY: the sink copies the serialized response during this call.
+        unsafe { reply.send(&serde_json::to_vec(&response).unwrap()) };
+        abi::STATUS_OK
+    }
+
+    let endpoint = HostApi {
+        header: AbiHeader::of::<HostApi>(),
+        context: std::ptr::null_mut(),
+        invoke,
+    };
+    // SAFETY: the callback is static and does not use its context.
+    let runtime = unsafe { RuntimeClient::from_endpoint(endpoint) };
+    assert!(SessionHistoryModule::start(runtime).is_ok());
+}
+
+#[test]
 fn shutdown_waits_for_owned_configuration_request_without_polling_new_work() {
     use amaterasu_module_sdk::abi::{self, AbiHeader, BorrowedBytes, HostApi, ReplySink};
     use std::{ffi::c_void, sync::Mutex};

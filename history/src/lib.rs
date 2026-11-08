@@ -62,9 +62,7 @@ impl ManagedModule for SessionHistoryModule {
         runtime.require_success(Command::Register {
             service: SERVICE.into(),
         })?;
-        for method in api::methods() {
-            runtime.require_success(Command::RegisterApi { method })?;
-        }
+        amaterasu_module_sdk::operation_api::register_selected(&runtime, &api::methods())?;
         if legacy_read_failed && let Some(store) = store.as_mut() {
             store.record_failure();
         }

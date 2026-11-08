@@ -59,9 +59,7 @@ impl ManagedModule for HostMetricsModule {
         runtime.require_success(Command::Register {
             service: SERVICE.into(),
         })?;
-        for method in api::methods() {
-            runtime.require_success(Command::RegisterApi { method })?;
-        }
+        amaterasu_module_sdk::operation_api::register_selected(&runtime, &api::methods())?;
         let startup_id = format!(
             "{}-{}",
             std::process::id(),
