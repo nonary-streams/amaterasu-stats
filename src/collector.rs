@@ -1,5 +1,6 @@
 use crate::model::{HostSnapshot, Sample, Settings};
-use crate::provider::{AVAILABLE, PLATFORM, Provider};
+use crate::provider::{AVAILABLE, PLATFORM};
+use crate::sampler::Sampler;
 use std::collections::{BTreeSet, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,7 +9,7 @@ const MAX_RESPONSE_SAMPLES: usize = 32;
 const MIN_DASHBOARD_LEASE: Duration = Duration::from_secs(5);
 
 pub struct Collector {
-    provider: Provider,
+    sampler: Sampler,
     settings: Settings,
     dashboard_expires: Option<Instant>,
     stream_activities: BTreeSet<String>,
@@ -19,7 +20,7 @@ pub struct Collector {
 impl Collector {
     pub fn new(settings: Settings) -> Self {
         Self {
-            provider: Provider::new(),
+            sampler: Sampler::new(),
             settings,
             dashboard_expires: None,
             stream_activities: BTreeSet::new(),
@@ -85,24 +86,37 @@ impl Collector {
 
     pub fn tick(&mut self, now: Instant) {
         self.prune();
+        self.collect_finished_sample();
         if !self.settings.enabled || !self.sampling_requested(now) {
             self.next_sample_at = None;
-            self.provider.reset_rate_baselines();
+            self.sampler.reset_rate_baselines();
             return;
         }
-        if self.next_sample_at.is_some_and(|deadline| now < deadline) {
+        if self.sampler.busy() || self.next_sample_at.is_some_and(|deadline| now < deadline) {
+            return;
+        }
+        self.sampler.request(now);
+        self.next_sample_at =
+            Some(now + Duration::from_millis(u64::from(self.settings.poll_interval_ms)));
+        self.collect_finished_sample();
+        self.prune();
+    }
+
+    fn collect_finished_sample(&mut self) {
+        let Some(host) = self.sampler.poll() else {
+            return;
+        };
+        // A sample already running when metrics were disabled is discarded.
+        if !self.settings.enabled {
             return;
         }
         self.samples.push_back(Sample {
             recorded_at_unix_ms: unix_time_milliseconds(),
-            host: self.provider.sample(now),
+            host,
         });
         while self.samples.len() > self.settings.max_history_points as usize {
             self.samples.pop_front();
         }
-        self.next_sample_at =
-            Some(now + Duration::from_millis(u64::from(self.settings.poll_interval_ms)));
-        self.prune();
     }
 
     pub fn platform(&self) -> &'static str {

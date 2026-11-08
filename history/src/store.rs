@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod checkpoint;
 mod timeline;
 
 const SCHEMA_VERSION: i64 = 3;
@@ -73,6 +74,16 @@ pub struct HistoryStore {
     failed_operations: u64,
     last_prune: PruneReport,
     next_prune_at_unix: Option<i64>,
+    _background_checkpoint: checkpoint::BackgroundCheckpoint,
+}
+
+/// Commits run on the host's module thread; see `checkpoint` for why they must
+/// not fold the log themselves.
+fn leave_checkpoints_to_background(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(&format!(
+        "PRAGMA wal_autocheckpoint = {};",
+        checkpoint::WAL_BACKSTOP_PAGES
+    ))
 }
 
 impl HistoryStore {
@@ -92,6 +103,7 @@ impl HistoryStore {
              PRAGMA synchronous = NORMAL;
              PRAGMA foreign_keys = ON;",
         )?;
+        leave_checkpoints_to_background(&connection)?;
         apply_schema(&mut connection)?;
         let store = Self {
             path: path.to_path_buf(),
@@ -112,6 +124,7 @@ impl HistoryStore {
             failed_operations: 0,
             last_prune: empty_prune_report(),
             next_prune_at_unix: None,
+            _background_checkpoint: checkpoint::BackgroundCheckpoint::start(path.to_path_buf()),
         };
         Ok(store)
     }
@@ -787,6 +800,7 @@ impl HistoryStore {
         let replacement = Connection::open_with_flags(&self.path, flags)?;
         replacement.busy_timeout(Duration::from_secs(5))?;
         replacement.pragma_update(None, "foreign_keys", "ON")?;
+        leave_checkpoints_to_background(&replacement)?;
         if self.settings.enabled {
             let mut replacement = replacement;
             recover_existing_rows(&mut replacement, now_unix)?;

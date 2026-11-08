@@ -5,6 +5,7 @@ mod model;
 mod nvidia;
 mod product_settings;
 mod provider;
+mod sampler;
 #[cfg(any(target_os = "windows", feature = "windows-platform-check"))]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod windows;
