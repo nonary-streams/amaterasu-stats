@@ -1,5 +1,148 @@
 use super::*;
 
+#[test]
+fn shutdown_does_not_start_migration_after_retiring_a_startup_read() {
+    let mut settings = ProductSettings::new(Some(HistorySettings::default()));
+    settings.start_startup_reconciliation(Some(HistorySettings::default()));
+    settings
+        .advance(&mut |command| {
+            assert!(matches!(command, Command::Request { .. }));
+            Ok(Response::Accepted { id: 9 })
+        })
+        .unwrap();
+    settings.prepare_shutdown();
+    settings
+        .advance(&mut |command| {
+            assert!(matches!(command, Command::TakeResult { request: 9 }));
+            Ok(Response::Result {
+                payload: absent_document(),
+            })
+        })
+        .unwrap();
+    settings.advance(&mut |_| Ok(Response::Ok)).unwrap();
+    assert!(!settings.busy());
+    assert!(settings.shutdown_ready());
+    settings
+        .advance(&mut |_| panic!("migration must not start after shutdown gate"))
+        .unwrap();
+}
+
+#[test]
+fn shutdown_discards_a_known_startup_retry_after_a_definite_service_error() {
+    let mut settings = ProductSettings::new(Some(HistorySettings::default()));
+    settings.start_startup_reconciliation(Some(HistorySettings::default()));
+    let mut requests = 0;
+    settings
+        .advance(&mut |command| {
+            assert!(matches!(command, Command::Request { .. }));
+            requests += 1;
+            Ok(Response::Error {
+                code: "service_unavailable".into(),
+                message: "configuration provider is stopping".into(),
+            })
+        })
+        .unwrap();
+    assert!(settings.busy());
+    settings.prepare_shutdown();
+    assert!(settings.shutdown_ready());
+    settings
+        .advance(&mut |_| panic!("shutdown must not retry a settled startup read"))
+        .unwrap();
+    assert_eq!(requests, 1);
+}
+
+#[test]
+fn shutdown_does_not_replay_a_write_with_unknown_admission() {
+    let mut settings = ProductSettings::new(None);
+    settings.ready = true;
+    settings.pending = None;
+    settings
+        .begin_update(7, 0, HistorySettings::default())
+        .unwrap();
+    settings
+        .advance(&mut |_| Err("lost admission".into()))
+        .unwrap();
+    settings.prepare_shutdown();
+    settings
+        .advance(&mut |_| panic!("shutdown must not create a new write"))
+        .unwrap();
+    settings
+        .advance(&mut |command| {
+            assert!(matches!(command, Command::LookupRequest { .. }));
+            Ok(Response::Error {
+                code: "invalid_request".into(),
+                message: "old runtime".into(),
+            })
+        })
+        .unwrap();
+    assert!(settings.busy());
+}
+
+#[test]
+fn shutdown_settles_absent_unknown_admission_without_submitting_a_write() {
+    let mut settings = ProductSettings::new(None);
+    settings.ready = true;
+    settings.pending = None;
+    settings
+        .begin_update(7, 0, HistorySettings::default())
+        .unwrap();
+    settings
+        .advance(&mut |_| Err("lost admission".into()))
+        .unwrap();
+    settings.prepare_shutdown();
+    settings
+        .advance(&mut |_| panic!("retry delay must not submit"))
+        .unwrap();
+    settings
+        .advance(&mut |command| {
+            assert!(matches!(command, Command::LookupRequest { .. }));
+            Ok(Response::Error {
+                code: "not_found".into(),
+                message: "absent".into(),
+            })
+        })
+        .unwrap();
+    assert!(!settings.busy());
+    assert!(!settings.shutdown_ready());
+    assert!(matches!(
+        settings.take_completion(),
+        Some(UpdateCompletion::Failed { request: 7, .. })
+    ));
+    assert!(settings.shutdown_ready());
+}
+
+#[test]
+fn expired_write_stays_fenced_instead_of_retrying_a_new_effect() {
+    let mut settings = ProductSettings::new(None);
+    settings.ready = true;
+    settings.pending = None;
+    settings
+        .begin_update(7, 0, HistorySettings::default())
+        .unwrap();
+    settings
+        .advance(&mut |_| Ok(Response::Accepted { id: 9 }))
+        .unwrap();
+    settings
+        .advance(&mut |_| {
+            Ok(Response::Error {
+                code: "deadline_exceeded".into(),
+                message: "expired".into(),
+            })
+        })
+        .unwrap();
+    settings.prepare_shutdown();
+    settings
+        .advance(&mut |command| {
+            assert!(matches!(command, Command::TakeResult { request: 9 }));
+            Ok(Response::Error {
+                code: "not_found".into(),
+                message: "expired".into(),
+            })
+        })
+        .unwrap();
+    assert!(settings.busy());
+}
+
 fn document(settings: &HistorySettings, revision: u64) -> Value {
     json!({
         "ok": true,

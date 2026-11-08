@@ -3,6 +3,7 @@ use crate::model::Settings;
 use amaterasu_module_sdk::{Command, ModuleResult, Response};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 const CONFIGURATION: &str = "amaterasu.configuration/1";
 const TIMEOUT_MS: u64 = 30_000;
@@ -21,7 +22,16 @@ enum Purpose {
 enum CallState {
     Submit,
     Waiting(u64),
-    Release { request: u64, payload: Value },
+    Release {
+        request: u64,
+        payload: Value,
+    },
+    ReleaseError {
+        request: u64,
+        code: String,
+        message: String,
+    },
+    Fenced,
 }
 
 struct PendingCall {
@@ -30,6 +40,8 @@ struct PendingCall {
     operation_id: String,
     parent: Option<u64>,
     state: CallState,
+    first_sent: Option<Instant>,
+    admission_uncertain: bool,
 }
 
 pub enum Completion {
@@ -44,6 +56,7 @@ pub struct ProductSettings {
     sequence: u64,
     pending: Option<PendingCall>,
     completions: VecDeque<Completion>,
+    shutting_down: bool,
 }
 
 impl ProductSettings {
@@ -60,8 +73,11 @@ impl ProductSettings {
                 operation_id: format!("host-metrics.configuration.register.{startup_id}"),
                 parent: None,
                 state: CallState::Submit,
+                first_sent: None,
+                admission_uncertain: false,
             }),
             completions: VecDeque::new(),
+            shutting_down: false,
         }
     }
 
@@ -73,12 +89,23 @@ impl ProductSettings {
         self.ready
     }
 
+    pub fn begin_shutdown(&mut self) {
+        self.shutting_down = true;
+    }
+
+    pub fn shutdown_ready(&self) -> bool {
+        self.pending.is_none() && self.completions.is_empty()
+    }
+
     pub fn begin_update(
         &mut self,
         request: u64,
         expected_revision: u64,
         desired: Settings,
     ) -> Result<(), Value> {
+        if self.shutting_down {
+            return Err(failure("shutting_down", "host metrics is shutting down"));
+        }
         if !self.ready {
             return Err(failure(
                 "configuration_unavailable",
@@ -120,6 +147,8 @@ impl ProductSettings {
             operation_id,
             parent: Some(request),
             state: CallState::Submit,
+            first_sent: None,
+            admission_uncertain: false,
         });
         Ok(())
     }
@@ -138,29 +167,92 @@ impl ProductSettings {
         let mut finished = false;
         let state = std::mem::replace(&mut pending.state, CallState::Submit);
         match state {
-            CallState::Submit => match send(Command::Request {
-                service: CONFIGURATION.into(),
-                payload: pending.payload.clone(),
-                timeout_ms: TIMEOUT_MS,
-                operation_id: pending.operation_id.clone(),
-                parent: pending.parent,
-            }) {
-                Ok(Response::Accepted { id }) => pending.state = CallState::Waiting(id),
-                Ok(Response::Error { code, message }) => {
-                    self.finish_error(pending.purpose.clone(), &code, &message);
-                    finished = true;
+            CallState::Submit if self.shutting_down && pending.first_sent.is_none() => {
+                if let Purpose::Update {
+                    management_request, ..
+                } = &pending.purpose
+                {
+                    self.completions.push_back(Completion::Update {
+                        request: *management_request,
+                        response: failure("shutting_down", "host metrics is shutting down"),
+                    });
                 }
-                Ok(_) | Err(_) => pending.state = CallState::Submit,
-            },
+                finished = true;
+            }
+            CallState::Submit if self.shutting_down || pending.admission_uncertain => {
+                let first_sent = pending.first_sent.expect("uncertain admission was sent");
+                let response = send(Command::LookupRequest {
+                    service: CONFIGURATION.into(),
+                    payload: pending.payload.clone(),
+                    operation_id: pending.operation_id.clone(),
+                    parent: pending.parent,
+                });
+                match response {
+                    Ok(Response::Accepted { id }) => pending.state = CallState::Waiting(id),
+                    Ok(Response::Error { code, .. })
+                        if code == "not_found"
+                            && first_sent.elapsed() < Duration::from_secs(300) =>
+                    {
+                        if self.shutting_down {
+                            if let Purpose::Update {
+                                management_request, ..
+                            } = &pending.purpose
+                            {
+                                self.completions.push_back(Completion::Update {
+                                    request: *management_request,
+                                    response: failure(
+                                        "configuration_unavailable",
+                                        "settings update was not admitted",
+                                    ),
+                                });
+                            }
+                            finished = true;
+                        } else {
+                            pending.first_sent = None;
+                            pending.admission_uncertain = false;
+                            pending.state = CallState::Submit;
+                        }
+                    }
+                    _ => pending.state = CallState::Submit,
+                }
+            }
+            CallState::Submit => {
+                pending.first_sent = Some(Instant::now());
+                match send(Command::Request {
+                    service: CONFIGURATION.into(),
+                    payload: pending.payload.clone(),
+                    timeout_ms: TIMEOUT_MS,
+                    operation_id: pending.operation_id.clone(),
+                    parent: pending.parent,
+                }) {
+                    Ok(Response::Accepted { id }) => pending.state = CallState::Waiting(id),
+                    Ok(Response::Error { code, message }) => {
+                        self.finish_error(pending.purpose.clone(), &code, &message);
+                        finished = true;
+                    }
+                    Ok(_) | Err(_) => {
+                        pending.admission_uncertain = true;
+                        pending.state = CallState::Submit;
+                    }
+                }
+            }
             CallState::Waiting(request) => match send(Command::TakeResult { request }) {
                 Ok(Response::Pending) | Err(_) => pending.state = CallState::Waiting(request),
                 Ok(Response::Result { payload }) => {
                     pending.state = CallState::Release { request, payload };
                 }
-                Ok(Response::Error { code, message }) => {
-                    self.finish_error(pending.purpose.clone(), &code, &message);
-                    finished = true;
+                // A broker deadline or cancellation does not prove a delivered
+                // configuration write has stopped; retain its identity.
+                Ok(Response::Error { code, message })
+                    if matches!(pending.purpose, Purpose::Load) =>
+                {
+                    pending.state = CallState::ReleaseError {
+                        request,
+                        code,
+                        message,
+                    };
                 }
+                Ok(Response::Error { .. }) => pending.state = CallState::Fenced,
                 Ok(_) => pending.state = CallState::Waiting(request),
             },
             CallState::Release { request, payload } => {
@@ -176,6 +268,30 @@ impl ProductSettings {
                     Ok(_) | Err(_) => pending.state = CallState::Release { request, payload },
                 }
             }
+            CallState::ReleaseError {
+                request,
+                code,
+                message,
+            } => match send(Command::ReleaseResult { request }) {
+                Ok(Response::Ok) => {
+                    self.finish_error(pending.purpose.clone(), &code, &message);
+                    finished = true;
+                }
+                Ok(Response::Error {
+                    code: release_code, ..
+                }) if release_code == "not_found" => {
+                    self.finish_error(pending.purpose.clone(), &code, &message);
+                    finished = true;
+                }
+                _ => {
+                    pending.state = CallState::ReleaseError {
+                        request,
+                        code,
+                        message,
+                    }
+                }
+            },
+            CallState::Fenced => pending.state = CallState::Fenced,
         }
         if !finished {
             self.pending = Some(pending);
@@ -192,6 +308,8 @@ impl ProductSettings {
                     operation_id: self.next_id("load"),
                     parent: None,
                     state: CallState::Submit,
+                    first_sent: None,
+                    admission_uncertain: false,
                 });
             }
             Purpose::Load => {
@@ -206,6 +324,8 @@ impl ProductSettings {
                         operation_id: self.next_id("reload"),
                         parent: None,
                         state: CallState::Submit,
+                        first_sent: None,
+                        admission_uncertain: false,
                     });
                 }
             }
@@ -237,6 +357,8 @@ impl ProductSettings {
                         operation_id: self.next_id("reload"),
                         parent: None,
                         state: CallState::Submit,
+                        first_sent: None,
+                        admission_uncertain: false,
                     });
                 }
             }
@@ -253,6 +375,8 @@ impl ProductSettings {
                     operation_id: self.next_id("register-retry"),
                     parent: None,
                     state: CallState::Submit,
+                    first_sent: None,
+                    admission_uncertain: false,
                 });
             }
             Purpose::Update {
@@ -392,5 +516,131 @@ mod tests {
         assert_eq!(error["code"], "revision_conflict");
         assert_eq!(error["message"], "revision changed");
         assert!(parse_settings_document(&json!({"ok":true,"revision":2,"values":{}})).is_none());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_discards_unsubmitted_startup_without_creating_work() {
+        let mut settings = ProductSettings::new("test");
+        settings.begin_shutdown();
+        settings
+            .advance(&mut |_| panic!("unexpected broker call"))
+            .unwrap();
+        assert!(settings.shutdown_ready());
+    }
+
+    #[test]
+    fn unknown_admission_uses_lookup_and_never_replays_during_shutdown() {
+        let mut settings = ProductSettings::new("test");
+        settings
+            .advance(&mut |command| {
+                assert!(matches!(command, Command::Request { .. }));
+                Err("lost acknowledgement".into())
+            })
+            .unwrap();
+        settings.begin_shutdown();
+        settings
+            .advance(&mut |command| {
+                assert!(matches!(command, Command::LookupRequest { .. }));
+                Ok(Response::error("not_found", "absent"))
+            })
+            .unwrap();
+        assert!(settings.shutdown_ready());
+    }
+
+    #[test]
+    fn late_unknown_admission_stays_fenced() {
+        let mut settings = ProductSettings::new("test");
+        settings
+            .advance(&mut |_| Err("lost acknowledgement".into()))
+            .unwrap();
+        settings.pending.as_mut().unwrap().first_sent =
+            Some(Instant::now() - Duration::from_secs(301));
+        settings.begin_shutdown();
+        settings
+            .advance(&mut |_| Ok(Response::error("not_found", "expired")))
+            .unwrap();
+        assert!(!settings.shutdown_ready());
+    }
+
+    #[test]
+    fn shutdown_waits_for_admitted_update_result_release_and_completion() {
+        let mut settings = ProductSettings::new("test");
+        settings.pending = None;
+        settings.ready = true;
+        let desired = Settings::default();
+        settings.begin_update(7, 0, desired.clone()).unwrap();
+        settings
+            .advance(&mut |_| Ok(Response::Accepted { id: 9 }))
+            .unwrap();
+        settings.begin_shutdown();
+        assert!(!settings.shutdown_ready());
+        settings
+            .advance(&mut |command| {
+                assert!(matches!(command, Command::TakeResult { request: 9 }));
+                Ok(Response::Result {
+                    payload: json!({"ok":true,"revision":1,"values":settings_value(&desired)}),
+                })
+            })
+            .unwrap();
+        settings
+            .advance(&mut |command| {
+                assert!(matches!(command, Command::ReleaseResult { request: 9 }));
+                Ok(Response::Ok)
+            })
+            .unwrap();
+        assert!(!settings.shutdown_ready());
+        assert!(matches!(
+            settings.take_completion(),
+            Some(Completion::Update { request: 7, .. })
+        ));
+        // A reconciliation follow-up, if scheduled, must not start new work.
+        settings
+            .advance(&mut |_| panic!("unexpected broker call"))
+            .unwrap();
+        assert!(settings.shutdown_ready());
+    }
+
+    #[test]
+    fn cancelled_delivered_write_does_not_prove_retirement() {
+        let mut settings = ProductSettings::new("test");
+        settings
+            .advance(&mut |_| Ok(Response::Accepted { id: 9 }))
+            .unwrap();
+        settings.begin_shutdown();
+        settings
+            .advance(&mut |_| Ok(Response::error("cancelled", "cancelled")))
+            .unwrap();
+        settings
+            .advance(&mut |_| panic!("must keep the fence"))
+            .unwrap();
+        assert!(!settings.shutdown_ready());
+    }
+
+    #[test]
+    fn failed_read_releases_its_result_and_shutdown_does_not_start_retry() {
+        let mut settings = ProductSettings::new("test");
+        settings.pending.as_mut().unwrap().purpose = Purpose::Load;
+        settings
+            .advance(&mut |_| Ok(Response::Accepted { id: 9 }))
+            .unwrap();
+        settings.begin_shutdown();
+        settings
+            .advance(&mut |_| Ok(Response::error("deadline_exceeded", "expired")))
+            .unwrap();
+        settings
+            .advance(&mut |command| {
+                assert!(matches!(command, Command::ReleaseResult { request: 9 }));
+                Ok(Response::Ok)
+            })
+            .unwrap();
+        settings
+            .advance(&mut |_| panic!("must not start retry during shutdown"))
+            .unwrap();
+        assert!(settings.shutdown_ready());
     }
 }

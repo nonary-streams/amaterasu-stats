@@ -33,6 +33,8 @@ struct SessionHistoryModule {
     legacy_cleanup_pending: bool,
     legacy_cleanup_retry_ticks: u8,
     deferred_settings: VecDeque<(u64, Operation)>,
+    completions: VecDeque<(u64, Value)>,
+    shutting_down: bool,
 }
 
 impl ManagedModule for SessionHistoryModule {
@@ -74,55 +76,72 @@ impl ManagedModule for SessionHistoryModule {
             legacy_cleanup_pending: false,
             legacy_cleanup_retry_ticks: 0,
             deferred_settings: VecDeque::new(),
+            completions: VecDeque::new(),
+            shutting_down: false,
         })
     }
 
+    fn prepare_shutdown(&mut self, _remaining_ms: u64) -> ModuleResult<()> {
+        Ok(())
+    }
+
+    fn quiesce(&mut self) -> ModuleResult<bool> {
+        self.shutting_down = true;
+        self.product_settings.prepare_shutdown();
+        Ok(self.product_settings.shutdown_ready()
+            && self.deferred_settings.is_empty()
+            && self.completions.is_empty())
+    }
+
     fn tick(&mut self) -> ModuleResult<()> {
-        match self.runtime.send(Command::Poll {})? {
-            Response::Request {
-                id,
-                caller,
-                service,
-                payload,
-                ..
-            } => {
-                match amaterasu_module_sdk::operation_api::decode_delivery(
+        self.flush_completions();
+        if !self.shutting_down && self.completions.is_empty() {
+            match self.runtime.send(Command::Poll {})? {
+                Response::Request {
+                    id,
+                    caller,
+                    service,
                     payload,
-                    &service,
-                    SERVICE,
-                    &api::methods(),
-                )
-                .and_then(|payload| {
-                    serde_json::from_value::<Operation>(payload).map_err(|e| e.to_string())
-                }) {
-                    Ok(operation)
-                        if service == "nonary.stats-history/1"
-                            || is_authorized(&caller, &operation) =>
-                    {
-                        self.accept_request(id, operation)?;
+                    ..
+                } => {
+                    match amaterasu_module_sdk::operation_api::decode_delivery(
+                        payload,
+                        &service,
+                        SERVICE,
+                        &api::methods(),
+                    )
+                    .and_then(|payload| {
+                        serde_json::from_value::<Operation>(payload).map_err(|e| e.to_string())
+                    }) {
+                        Ok(operation)
+                            if service == "nonary.stats-history/1"
+                                || is_authorized(&caller, &operation) =>
+                        {
+                            self.accept_request(id, operation)?;
+                        }
+                        Ok(_) => self.complete(
+                            id,
+                            failure(
+                                "permission_denied",
+                                "caller is not authorized for this history operation",
+                            ),
+                        )?,
+                        Err(_) => self.complete(
+                            id,
+                            failure(
+                                "invalid_request",
+                                "request does not match the history schema",
+                            ),
+                        )?,
                     }
-                    Ok(_) => self.complete(
-                        id,
-                        failure(
-                            "permission_denied",
-                            "caller is not authorized for this history operation",
-                        ),
-                    )?,
-                    Err(_) => self.complete(
-                        id,
-                        failure(
-                            "invalid_request",
-                            "request does not match the history schema",
-                        ),
-                    )?,
+                    Ok(())
                 }
-                Ok(())
-            }
-            Response::Pending => Ok(()),
-            response => Err(format!(
-                "unexpected session-history poll response: {response:?}"
-            )),
-        }?;
+                Response::Pending => Ok(()),
+                response => Err(format!(
+                    "unexpected session-history poll response: {response:?}"
+                )),
+            }?;
+        }
 
         let runtime = &mut self.runtime;
         self.product_settings
@@ -133,7 +152,14 @@ impl ManagedModule for SessionHistoryModule {
         }
         self.cleanup_legacy_settings();
         self.complete_settings_updates()?;
-        self.drain_deferred_settings()?;
+        if self.shutting_down {
+            while let Some((id, _)) = self.deferred_settings.pop_front() {
+                self.complete(id, failure("shutting_down", "session history is stopping"))?;
+            }
+        } else {
+            self.drain_deferred_settings()?;
+        }
+        self.flush_completions();
         Ok(())
     }
 }
@@ -301,15 +327,31 @@ impl SessionHistoryModule {
     }
 
     fn complete(&mut self, request: u64, payload: Value) -> ModuleResult<()> {
-        match self.runtime.send(Command::Complete { request, payload })? {
-            Response::Ok => Ok(()),
-            Response::Error { code, .. } if code == "request_ended" || code == "not_found" => {
-                Ok(())
-            }
-            response => Err(format!(
-                "unexpected session-history completion response: {response:?}"
-            )),
+        self.completions.push_back((request, payload));
+        Ok(())
+    }
+
+    fn flush_completions(&mut self) {
+        flush_completions(&mut self.completions, &mut |command| {
+            self.runtime.send(command)
+        });
+    }
+}
+
+fn flush_completions(
+    completions: &mut VecDeque<(u64, Value)>,
+    send: &mut impl FnMut(Command) -> ModuleResult<Response>,
+) {
+    while let Some((request, payload)) = completions.front() {
+        match send(Command::Complete {
+            request: *request,
+            payload: payload.clone(),
+        }) {
+            Ok(Response::Ok) => {}
+            Ok(Response::Error { code, .. }) if code == "request_ended" || code == "not_found" => {}
+            _ => return,
         }
+        completions.pop_front();
     }
 }
 

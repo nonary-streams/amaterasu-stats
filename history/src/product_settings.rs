@@ -3,6 +3,7 @@ use crate::model::HistorySettings;
 use amaterasu_module_sdk::{Command, ModuleResult, Response};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 const CONFIGURATION_SERVICE: &str = "amaterasu.configuration/1";
 const PRODUCT_VERSION: u32 = 1;
@@ -76,6 +77,10 @@ pub struct ProductSettings {
     next_operation: u64,
     pending: Option<Pending>,
     completions: VecDeque<UpdateCompletion>,
+    uncertain_admission: bool,
+    shutting_down: bool,
+    first_sent: Option<Instant>,
+    operation_generation: Option<String>,
 }
 
 impl ProductSettings {
@@ -97,6 +102,10 @@ impl ProductSettings {
                 },
             }),
             completions: VecDeque::new(),
+            uncertain_admission: false,
+            shutting_down: false,
+            first_sent: None,
+            operation_generation: amaterasu_storage::random_identifier().ok(),
         }
     }
 
@@ -106,6 +115,39 @@ impl ProductSettings {
 
     pub fn busy(&self) -> bool {
         self.pending.is_some()
+    }
+
+    pub fn prepare_shutdown(&mut self) {
+        self.shutting_down = true;
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        let startup_read = is_startup_read(&pending.work);
+        if self.first_sent.is_none()
+            && !self.uncertain_admission
+            && matches!(pending.call, Call::Submit { .. })
+            && (startup_read
+                || !matches!(
+                    pending.work,
+                    Work::ReconcileUpdate { .. } | Work::ReconcileStartup { .. }
+                ))
+        {
+            if let Work::Update {
+                management_request, ..
+            } = pending.work
+            {
+                self.complete_failure(
+                    management_request,
+                    failure("shutting_down", "session history is stopping"),
+                );
+            }
+        } else {
+            self.pending = Some(pending);
+        }
+    }
+
+    pub fn shutdown_ready(&self) -> bool {
+        self.pending.is_none() && self.completions.is_empty()
     }
 
     pub fn settings(&self) -> (&HistorySettings, u64) {
@@ -179,6 +221,68 @@ impl ProductSettings {
                     });
                     return Ok(());
                 }
+                if self.uncertain_admission {
+                    let within_retention = || {
+                        self.first_sent
+                            .is_some_and(|first| first.elapsed() < Duration::from_secs(300))
+                    };
+                    let result = if within_retention() {
+                        send(Command::LookupRequest {
+                            service: CONFIGURATION_SERVICE.into(),
+                            payload: payload.clone(),
+                            operation_id: operation_id.clone(),
+                            parent,
+                        })
+                    } else {
+                        Err("configuration admission retention expired".into())
+                    };
+                    match result {
+                        Ok(Response::Accepted { id }) => {
+                            self.uncertain_admission = false;
+                            self.first_sent = None;
+                            self.pending = Some(Pending {
+                                work: pending.work,
+                                call: Call::Waiting { request: id },
+                            });
+                        }
+                        Ok(Response::Error { code, .. })
+                            if code == "not_found"
+                                && within_retention()
+                                && ((self.shutting_down && is_startup_read(&pending.work))
+                                    || (self.operation_generation.is_some()
+                                        && operation_id
+                                            != "session-history.configuration.startup.0")) =>
+                        {
+                            self.uncertain_admission = false;
+                            self.first_sent = None;
+                            self.pending = Some(Pending {
+                                work: pending.work,
+                                call: Call::Submit {
+                                    payload,
+                                    operation_id,
+                                    parent,
+                                    retry_ticks: 0,
+                                },
+                            });
+                            if self.shutting_down {
+                                self.prepare_shutdown();
+                            }
+                        }
+                        _ => {
+                            self.pending = Some(Pending {
+                                work: pending.work,
+                                call: Call::Submit {
+                                    payload,
+                                    operation_id,
+                                    parent,
+                                    retry_ticks: 20,
+                                },
+                            })
+                        }
+                    }
+                    return Ok(());
+                }
+                self.first_sent = Some(Instant::now());
                 match send(Command::Request {
                     service: CONFIGURATION_SERVICE.into(),
                     payload: payload.clone(),
@@ -187,18 +291,34 @@ impl ProductSettings {
                     parent,
                 }) {
                     Ok(Response::Accepted { id }) => {
+                        self.uncertain_admission = false;
+                        self.first_sent = None;
                         self.pending = Some(Pending {
                             work: pending.work,
                             call: Call::Waiting { request: id },
                         });
                     }
                     Ok(Response::Error { code, .. }) => {
-                        self.on_submit_error(pending.work, &code);
+                        self.first_sent = None;
+                        if code == "conflict" {
+                            self.uncertain_admission = true;
+                            self.pending = Some(Pending {
+                                work: pending.work,
+                                call: Call::Submit {
+                                    payload,
+                                    operation_id,
+                                    parent,
+                                    retry_ticks: 1,
+                                },
+                            });
+                        } else {
+                            self.on_submit_error(pending.work, &code);
+                        }
                     }
-                    Ok(_) => self.retry_work(pending.work, 20),
-                    Err(_) => {
+                    Ok(_) | Err(_) => {
                         // A stable operation id recovers an accepted request if its
                         // acknowledgement was lost in transport.
+                        self.uncertain_admission = true;
                         self.pending = Some(Pending {
                             work: pending.work,
                             call: Call::Submit {
@@ -218,6 +338,16 @@ impl ProductSettings {
                         call: Call::Waiting { request },
                     });
                 }
+                Ok(Response::Error { .. })
+                    if matches!(pending.work, Work::Initialize { .. } | Work::Update { .. }) =>
+                {
+                    // Broker cancellation, expiry or loss does not prove a
+                    // delivered configuration write has stopped executing.
+                    self.pending = Some(Pending {
+                        work: pending.work,
+                        call: Call::Waiting { request },
+                    });
+                }
                 Ok(Response::Error { code, .. }) if code == "not_found" => {
                     self.on_child_missing(pending.work);
                 }
@@ -228,6 +358,12 @@ impl ProductSettings {
                             request,
                             outcome: ChildOutcome::Payload(payload),
                         },
+                    });
+                }
+                Ok(_) if matches!(pending.work, Work::Initialize { .. } | Work::Update { .. }) => {
+                    self.pending = Some(Pending {
+                        work: pending.work,
+                        call: Call::Waiting { request },
                     });
                 }
                 Ok(_) => {
@@ -259,6 +395,9 @@ impl ProductSettings {
     }
 
     fn on_submit_error(&mut self, work: Work, code: &str) {
+        if self.shutting_down && is_startup_read(&work) {
+            return;
+        }
         match work {
             Work::StartupProbe { candidate } => self.retry_startup_probe(candidate, 20),
             Work::Initialize { candidate } if code == "revision_conflict" => {
@@ -290,6 +429,9 @@ impl ProductSettings {
     }
 
     fn on_child_missing(&mut self, work: Work) {
+        if self.shutting_down && is_startup_read(&work) {
+            return;
+        }
         match work {
             Work::StartupProbe { candidate } => self.start_startup_reconciliation(candidate),
             Work::Initialize { candidate } => self.start_startup_reconciliation(Some(candidate)),
@@ -308,6 +450,9 @@ impl ProductSettings {
     }
 
     fn on_terminal(&mut self, work: Work, outcome: ChildOutcome) {
+        if self.shutting_down && is_startup_read(&work) {
+            return;
+        }
         let ChildOutcome::Payload(payload) = outcome else {
             self.retry_work(work, 20);
             return;
@@ -568,8 +713,20 @@ impl ProductSettings {
     fn next_operation_id(&mut self, purpose: &str) -> String {
         let id = self.next_operation;
         self.next_operation = self.next_operation.saturating_add(1);
-        format!("session-history.configuration.{purpose}.{id}")
+        match &self.operation_generation {
+            Some(generation) => {
+                format!("session-history.configuration.{purpose}.{generation}.{id}")
+            }
+            None => format!("session-history.configuration.{purpose}.{id}"),
+        }
     }
+}
+
+fn is_startup_read(work: &Work) -> bool {
+    matches!(
+        work,
+        Work::StartupProbe { .. } | Work::ReconcileStartup { .. }
+    )
 }
 
 enum Document {

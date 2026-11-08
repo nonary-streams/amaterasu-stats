@@ -3,6 +3,93 @@ use model::HistorySettings;
 use serde_json::json;
 use std::fs;
 
+#[test]
+fn shutdown_waits_for_owned_configuration_request_without_polling_new_work() {
+    use amaterasu_module_sdk::abi::{self, AbiHeader, BorrowedBytes, HostApi, ReplySink};
+    use std::{ffi::c_void, sync::Mutex};
+    unsafe extern "C" fn invoke(
+        context: *mut c_void,
+        input: BorrowedBytes,
+        reply: ReplySink,
+    ) -> abi::Status {
+        // SAFETY: the test owns the context and command bytes for the synchronous call.
+        let calls = unsafe { &*context.cast::<Mutex<Vec<Command>>>() };
+        let command: Command = serde_json::from_slice(unsafe { input.read().unwrap() }).unwrap();
+        let response = match &command {
+            Command::Poll {} => Response::Request {
+                id: 12,
+                caller: STREAM_SESSION_CALLER.into(),
+                initiator: STREAM_SESSION_CALLER.into(),
+                service: SERVICE.into(),
+                payload: json!({"action":"stream_activity_end","session_id":"session"}),
+                remaining_ms: 1000,
+            },
+            Command::Request { .. } => Response::Accepted { id: 9 },
+            Command::TakeResult { .. } => Response::Pending,
+            Command::Complete { .. } => Response::Ok,
+            _ => panic!("unexpected command during shutdown"),
+        };
+        calls.lock().unwrap().push(command);
+        let bytes = serde_json::to_vec(&response).unwrap();
+        // SAFETY: the reply sink copies these bytes before returning.
+        unsafe { reply.send(&bytes) };
+        abi::STATUS_OK
+    }
+    let calls = Mutex::new(Vec::new());
+    let endpoint = HostApi {
+        header: AbiHeader::of::<HostApi>(),
+        context: (&calls as *const Mutex<Vec<Command>>).cast_mut().cast(),
+        invoke,
+    };
+    // SAFETY: the endpoint and its context outlive the module and all calls.
+    let runtime = unsafe { RuntimeClient::from_endpoint(endpoint) };
+    let mut module = SessionHistoryModule {
+        runtime,
+        store: None,
+        product_settings: ProductSettings::new(None),
+        loaded_revision: None,
+        legacy_cleanup_pending: false,
+        legacy_cleanup_retry_ticks: 0,
+        deferred_settings: VecDeque::new(),
+        completions: VecDeque::new(),
+        shutting_down: false,
+    };
+    module.prepare_shutdown(1000).unwrap();
+    module.tick().unwrap();
+    assert!(!module.quiesce().unwrap());
+    module.tick().unwrap();
+    module.tick().unwrap();
+    assert!(!module.quiesce().unwrap());
+    let calls = calls.lock().unwrap();
+    assert!(matches!(&calls[0], Command::Poll {}));
+    assert!(matches!(&calls[1], Command::Request { .. }));
+    assert!(matches!(&calls[2], Command::Complete { request: 12, .. }));
+    assert!(matches!(&calls[3], Command::TakeResult { request: 9 }));
+}
+
+#[test]
+fn lost_completion_reply_retries_the_same_saved_result() {
+    let expected = json!({"ok": true, "recorded": true});
+    let mut queue = VecDeque::from([(42, expected.clone())]);
+    let mut calls = Vec::new();
+    flush_completions(&mut queue, &mut |command| {
+        calls.push(command);
+        Err("lost completion reply".into())
+    });
+    assert_eq!(queue.len(), 1);
+    flush_completions(&mut queue, &mut |command| {
+        calls.push(command);
+        Ok(Response::Error {
+            code: "request_ended".into(),
+            message: "already complete".into(),
+        })
+    });
+    assert!(queue.is_empty());
+    assert!(calls.iter().all(
+        |call| matches!(call, Command::Complete { request: 42, payload } if payload == &expected)
+    ));
+}
+
 fn operation(action: &str) -> Operation {
     let mut payload = json!({"action": action});
     match action {
