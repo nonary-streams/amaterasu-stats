@@ -557,7 +557,9 @@ fn unix_time_seconds() -> i64 {
     }
 }
 
-amaterasu_module_sdk::export_module!(SessionHistoryModule);
+amaterasu_module_sdk::export_module!(
+    amaterasu_module_sdk::service_worker::ServiceWorker<SessionHistoryModule>
+);
 
 #[cfg(test)]
 mod tests;
