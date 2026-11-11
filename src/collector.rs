@@ -119,6 +119,10 @@ impl Collector {
         }
     }
 
+    pub fn take_diagnostics(&mut self) -> Vec<String> {
+        self.sampler.take_diagnostics()
+    }
+
     pub fn platform(&self) -> &'static str {
         PLATFORM
     }

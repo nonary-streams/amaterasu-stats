@@ -22,6 +22,7 @@ const RESULT_CAPACITY: usize = 1;
 struct Background {
     requests: Option<SyncSender<Request>>,
     results: Option<Receiver<HostSnapshot>>,
+    diagnostics: Option<Receiver<Vec<String>>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -30,6 +31,7 @@ impl Drop for Background {
         // Close both directions so a worker blocked on either one exits.
         self.requests.take();
         self.results.take();
+        self.diagnostics.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -52,6 +54,7 @@ pub(crate) struct Sampler {
     backend: Backend,
     busy: bool,
     baselines_dirty: bool,
+    pending_diagnostics: std::collections::VecDeque<String>,
 }
 
 impl Sampler {
@@ -74,6 +77,7 @@ impl Sampler {
             backend,
             busy: false,
             baselines_dirty: false,
+            pending_diagnostics: std::collections::VecDeque::new(),
         }
     }
 
@@ -82,15 +86,34 @@ impl Sampler {
     fn background() -> Self {
         let (requests, queued) = sync_channel::<Request>(REQUEST_CAPACITY);
         let (finished, results) = sync_channel::<HostSnapshot>(RESULT_CAPACITY);
+        let (diagnostics_tx, diagnostics) = sync_channel::<Vec<String>>(1);
         let worker = thread::Builder::new()
             .name("host-metrics".into())
-            .spawn(move || run(&queued, &finished))
+            .spawn(move || run(&queued, &finished, &diagnostics_tx))
             .ok();
         Self::with_backend(Backend::Background(Background {
             requests: Some(requests),
             results: Some(results),
+            diagnostics: Some(diagnostics),
             worker,
         }))
+    }
+
+    pub(crate) fn take_diagnostics(&mut self) -> Vec<String> {
+        let receiver = match &self.backend {
+            Backend::Background(background) => background.diagnostics.as_ref(),
+            #[cfg(test)]
+            Backend::Inline(_) => None,
+        };
+        if self.pending_diagnostics.is_empty()
+            && let Some(receiver) = receiver
+            && let Ok(reports) = receiver.try_recv()
+        {
+            self.pending_diagnostics
+                .extend(reports.into_iter().take(32));
+        }
+        let count = self.pending_diagnostics.len().min(4);
+        self.pending_diagnostics.drain(..count).collect()
     }
 
     pub(crate) fn busy(&self) -> bool {
@@ -169,12 +192,22 @@ fn offer(background: &Background, request: Request) -> bool {
 }
 
 /// The provider is created here because its NVML handles stay on one thread.
-fn run(queued: &Receiver<Request>, finished: &SyncSender<HostSnapshot>) {
+fn run(
+    queued: &Receiver<Request>,
+    finished: &SyncSender<HostSnapshot>,
+    diagnostics: &SyncSender<Vec<String>>,
+) {
     let mut provider = Provider::new();
+    let mut dropped = 0u64;
     while let Ok(request) = queued.recv() {
         match request {
             Request::Sample(now) => {
-                if finished.send(provider.sample(now)).is_err() {
+                let snapshot = provider.sample(now);
+                let reports = crate::stream_diagnostics::collect(&snapshot, dropped);
+                if diagnostics.try_send(reports).is_err() {
+                    dropped = dropped.saturating_add(1);
+                }
+                if finished.send(snapshot).is_err() {
                     return;
                 }
             }

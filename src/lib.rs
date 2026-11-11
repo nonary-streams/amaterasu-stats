@@ -6,6 +6,7 @@ mod nvidia;
 mod product_settings;
 mod provider;
 mod sampler;
+mod stream_diagnostics;
 #[cfg(any(target_os = "windows", feature = "windows-platform-check"))]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod windows;
@@ -151,6 +152,11 @@ impl ManagedModule for HostMetricsModule {
             }
         }
         self.collector.tick(Instant::now());
+        for report in self.collector.take_diagnostics() {
+            let _ = self
+                .runtime
+                .log(amaterasu_module_sdk::LogLevel::Info, "host.timing", &report);
+        }
         self.drain_deferred_settings()?;
         flush_completions(&mut self.pending_completions, &mut |command| {
             self.runtime.send(command)
