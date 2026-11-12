@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "family": "statistics",
+  "repository": "https://github.com/nonary-streams/amaterasu-stats",
+  "mount": "modules/stats",
+  "components": [
+    {
+      "id": "amaterasu.host-metrics",
+      "package": "amaterasu-host-metrics",
+      "path": ".",
+      "name": "Host metrics",
+      "summary": "Samples processor, graphics and stream statistics."
+    },
+    {
+      "id": "amaterasu.session-history",
+      "package": "amaterasu-session-history",
+      "path": "history",
+      "name": "Session history",
+      "summary": "Records past sessions and their timelines."
+    }
+  ]
+}
