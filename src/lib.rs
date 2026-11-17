@@ -153,9 +153,11 @@ impl ManagedModule for HostMetricsModule {
         }
         self.collector.tick(Instant::now());
         for report in self.collector.take_diagnostics() {
-            let _ = self
-                .runtime
-                .log(amaterasu_module_sdk::LogLevel::Info, "host.timing", &report);
+            let _ = self.runtime.log(
+                amaterasu_module_sdk::LogLevel::Debug,
+                "host.timing",
+                &report,
+            );
         }
         self.drain_deferred_settings()?;
         flush_completions(&mut self.pending_completions, &mut |command| {
