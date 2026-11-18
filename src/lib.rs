@@ -155,7 +155,7 @@ impl ManagedModule for HostMetricsModule {
         for report in self.collector.take_diagnostics() {
             let _ = self.runtime.log(
                 amaterasu_module_sdk::LogLevel::Debug,
-                "host.timing",
+                "timing/host.timing",
                 &report,
             );
         }
