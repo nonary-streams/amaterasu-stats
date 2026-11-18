@@ -2,6 +2,7 @@
 pub mod api;
 mod collector;
 mod model;
+#[cfg(any(target_os = "linux", windows, feature = "windows-platform-check"))]
 mod nvidia;
 mod product_settings;
 mod provider;

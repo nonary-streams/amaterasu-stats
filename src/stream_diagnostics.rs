@@ -4,9 +4,11 @@ use crate::model::HostSnapshot;
 use serde_json::Value;
 use serde_json::json;
 #[cfg(any(target_os = "linux", test))]
-use std::{collections::BTreeSet, fs, io::Read, path::Path};
+use std::collections::BTreeSet;
+#[cfg(target_os = "linux")]
+use std::{fs, io::Read, path::Path};
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn read(path: impl AsRef<Path>) -> Option<String> {
     let mut text = String::new();
     fs::File::open(path)
@@ -19,11 +21,16 @@ fn read(path: impl AsRef<Path>) -> Option<String> {
 
 pub(crate) fn collect(snapshot: &HostSnapshot, dropped: u64) -> Vec<String> {
     let clock = amaterasu_module_sdk::diagnostics::monotonic_time_us();
-    let mut records = vec![json!({"event":"host_sample_window","pid":std::process::id(),
+    let records = vec![json!({"event":"host_sample_window","pid":std::process::id(),
         "monotonic_us":clock,"host":snapshot,"diagnostic_batches_dropped_cumulative":dropped,
         "scope":"sampled_cpu_memory_gpu_temperature_and_network_counters_not_per_frame_device_timing"}).to_string()];
     #[cfg(target_os = "linux")]
-    linux(&mut records, clock);
+    {
+        let mut records = records;
+        linux(&mut records, clock);
+        records
+    }
+    #[cfg(not(target_os = "linux"))]
     records
 }
 

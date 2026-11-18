@@ -1,4 +1,6 @@
+#[cfg(not(windows))]
 use crate::model::HostSnapshot;
+#[cfg(not(windows))]
 use std::time::Instant;
 
 #[cfg(target_os = "linux")]
